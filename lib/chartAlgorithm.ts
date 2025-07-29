@@ -61,16 +61,53 @@ export class ChartAlgorithm {
         previousWeekPoints
       );
 
+      // Get weeks on chart for tiebreaker
+      const previousWeekData = getSongPreviousWeek(track.song_name, track.artist_name, weekStart);
+      let weeksOnChart = 0;
+      
+      if (previousWeekData?.was_in_top_100) {
+        // Song was in top 100 last week, continue counting
+        weeksOnChart = previousWeekData.weeks_on_chart + 1;
+      } else if (previousWeekData && !previousWeekData.was_in_top_100) {
+        // Song existed before but wasn't in top 100 last week
+        const totalPreviousWeeks = getSongTotalWeeksInTop100(track.song_name, track.artist_name, weekStart);
+        if (totalPreviousWeeks > 0) {
+          weeksOnChart = totalPreviousWeeks + 1;
+        } else {
+          weeksOnChart = 1; // First time in top 100
+        }
+      } else {
+        // No previous data = First time ever
+        weeksOnChart = 1;
+      }
+
       processedTracks.push({
         ...track,
         points: pointsCalculation.total,
         points_from_current_week: pointsCalculation.fromCurrent,
         points_from_previous_week: pointsCalculation.fromPrevious,
+        weeks_on_chart: weeksOnChart,
       });
     }
 
-    // Sort by total points (descending) - include ALL songs, even with tiny points
-    return processedTracks.sort((a, b) => b.points - a.points);
+    // Sort by total points (descending) with tiebreaker based on weeks on chart
+    return processedTracks.sort((a, b) => {
+      // Primary sort: points (descending)
+      if (b.points !== a.points) {
+        return b.points - a.points;
+      }
+      
+      // Tiebreaker: weeks on chart (descending) - songs with more weeks rank higher
+      const aWeeks = a.weeks_on_chart || 0;
+      const bWeeks = b.weeks_on_chart || 0;
+      
+      // Log tiebreaker decisions for debugging
+      if (aWeeks !== bWeeks) {
+        console.log(`Tiebreaker: "${a.song_name}" (${aWeeks} weeks) vs "${b.song_name}" (${bWeeks} weeks) - ${bWeeks > aWeeks ? b.song_name : a.song_name} wins`);
+      }
+      
+      return bWeeks - aWeeks;
+    });
   }
 
   /**
@@ -99,8 +136,8 @@ export class ChartAlgorithm {
         (actualPeakPosition ? Math.min(currentPosition, actualPeakPosition) : currentPosition) : 
         currentPosition;
       
-      // Calculate weeks on chart logic (only count weeks in top 100)
-      let weeksOnChart = 0;
+      // Use weeks on chart that was calculated during sorting, but adjust for current week
+      let weeksOnChart = track.weeks_on_chart || 0;
       let isNewEntry = false;
       let isRecurring = false;
       let lastOnChart: string | null = null;
@@ -108,14 +145,14 @@ export class ChartAlgorithm {
       if (isInTop100) {
         if (previousWeekData?.was_in_top_100) {
           // Song was in top 100 last week, continue counting
-          weeksOnChart = previousWeekData.weeks_on_chart + 1;
+          // weeksOnChart is already correct from processWeeklyData
         } else if (previousWeekData && !previousWeekData.was_in_top_100) {
           // Song existed before but wasn't in top 100 last week = RECURRING
           // Only mark as recurring if it was in top 100 at some point before
           const totalPreviousWeeks = getSongTotalWeeksInTop100(track.song_name, track.artist_name, weekStart);
           if (totalPreviousWeeks > 0) {
             isRecurring = true;
-            weeksOnChart = totalPreviousWeeks + 1;
+            // weeksOnChart is already correct from processWeeklyData
             // Get the last week this song was on the chart
             lastOnChart = getSongLastWeekOnChart(track.song_name, track.artist_name, weekStart);
           } else {
